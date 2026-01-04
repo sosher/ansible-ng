@@ -1,0 +1,63 @@
+---
+- name: Enable Chaotic-AUR repository on Arch
+  hosts: arch
+  gather_facts: false
+  become: true
+  vars:
+    chaotic_key_id: "3056513887B78AEB"
+    chaotic_keyserver: "keyserver.ubuntu.com"
+    chaotic_keyring_url: "https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst"
+    chaotic_mirrorlist_url: "https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst"
+    chaotic_pacman_conf_block: |
+      [chaotic-aur]
+      Include = /etc/pacman.d/chaotic-mirrorlist
+
+  tasks:
+    - name: Check whether Chaotic-AUR key is present
+      ansible.builtin.command:
+        cmd: pacman-key --list-keys "{{ chaotic_key_id }}"
+      register: chaotic_key_present
+      changed_when: false
+      failed_when: false
+
+    - name: Receive Chaotic-AUR signing key
+      when: chaotic_key_present.rc != 0
+      ansible.builtin.command:
+        cmd: pacman-key --recv-key "{{ chaotic_key_id }}" --keyserver "{{ chaotic_keyserver }}"
+      changed_when: true
+
+    - name: Locally sign Chaotic-AUR signing key
+      when: chaotic_key_present.rc != 0
+      ansible.builtin.command:
+        cmd: pacman-key --lsign-key "{{ chaotic_key_id }}"
+      changed_when: true
+
+    - name: Check whether chaotic keyring packages are installed
+      ansible.builtin.command:
+        cmd: pacman -Q "{{ item }}"
+      loop:
+        - chaotic-keyring
+        - chaotic-mirrorlist
+      register: chaotic_pkg_query
+      changed_when: false
+      failed_when: false
+
+    - name: Install Chaotic-AUR keyring packages from upstream URLs
+      when: chaotic_pkg_query.results | selectattr('rc', 'ne', 0) | list | length > 0
+      ansible.builtin.command:
+        cmd: >-
+          pacman -U --noconfirm
+          {{ chaotic_keyring_url }}
+          {{ chaotic_mirrorlist_url }}
+      changed_when: true
+
+    - name: Add Chaotic-AUR repository to pacman.conf
+      ansible.builtin.blockinfile:
+        path: /etc/pacman.conf
+        marker: "# {mark} ANSIBLE MANAGED: chaotic-aur"
+        block: "{{ chaotic_pacman_conf_block }}"
+
+    - name: Refresh pacman package database
+      ansible.builtin.command:
+        cmd: pacman -Sy
+      changed_when: false

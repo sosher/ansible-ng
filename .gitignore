@@ -1,0 +1,10 @@
+# Ansible transient files
+*.retry
+.ansible/tmp/
+
+# Local vault password file (do not commit)
+.vault_pass
+
+# Local inventory + secrets (keep examples in-repo)
+inventories/hosts.ini
+inventories/group_vars/arch/vault.yml

@@ -1,0 +1,69 @@
+---
+- name: Ensure Debian Trixie Incus container exists
+  hosts: incus
+  gather_facts: false
+  vars:
+    trixie_incus_remote: IncusOS
+    trixie_incus_url: https://IncusOS:8443
+    trixie_container_name: trixie-lab
+    trixie_project: default
+    trixie_profiles:
+      - default
+    trixie_image_alias: debian/trixie
+    trixie_image_server: https://images.linuxcontainers.org
+    trixie_image_protocol: simplestreams
+    trixie_packages:
+      - duf
+      - bat
+      - git
+      - fzf
+    trixie_exec_target: >-
+      {{
+        trixie_incus_remote | default('', true) | length > 0
+        | ternary(trixie_incus_remote ~ ':' ~ trixie_container_name, trixie_container_name)
+      }}
+
+  tasks:
+    - name: Ensure Debian Trixie container is running
+      community.general.lxd_container:
+        name: "{{ trixie_container_name }}"
+        project: "{{ trixie_project }}"
+        state: started
+        type: container
+        profiles: "{{ trixie_profiles }}"
+        wait_for_ipv4: true
+        ignore_volatile_options: true
+        url: "{{ trixie_incus_url }}"
+        source:
+          type: image
+          mode: pull
+          server: "{{ trixie_image_server }}"
+          protocol: "{{ trixie_image_protocol }}"
+          alias: "{{ trixie_image_alias }}"
+
+    - name: Identify missing packages inside container
+      ansible.builtin.shell: |
+        incus exec --project {{ trixie_project }} {{ trixie_exec_target }} -- bash -s <<'EOF'
+        set -euo pipefail
+        missing=()
+        for pkg in {{ trixie_packages | join(' ') }}; do
+          if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+            missing+=("$pkg")
+          fi
+        done
+        if [ "${#missing[@]}" -gt 0 ]; then
+          printf '%s\n' "${missing[@]}"
+        fi
+        EOF
+      register: trixie_missing_packages
+      changed_when: false
+
+    - name: Install missing packages inside container
+      ansible.builtin.shell: |
+        incus exec --project {{ trixie_project }} {{ trixie_exec_target }} -- bash -s <<'EOF'
+        set -euo pipefail
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y {{ trixie_missing_packages.stdout_lines | join(' ') }}
+        EOF
+      when: trixie_missing_packages.stdout | length > 0
+      changed_when: true

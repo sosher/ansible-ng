@@ -1,0 +1,4 @@
+# Create the real file at: inventories/group_vars/arch/vault.yml
+# Encrypt it with: ansible-vault create inventories/group_vars/arch/vault.yml
+# Then store secrets like:
+# ansible_become_pass: "<your sudo password>"

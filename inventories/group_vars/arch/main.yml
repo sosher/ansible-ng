@@ -1,0 +1,37 @@
+---
+# Packages needed on any Arch host to build/install AUR packages like yay.
+arch_base_packages:
+  - base-devel
+  - git
+  - go
+  - duf
+  - bat
+  - jq
+  - unzip
+  - curl
+  - wget
+  - openssl
+  - dysk
+  - zsh
+
+# Packages to install from Chaotic-AUR (prebuilt).
+# These typically originate from AUR, but are installed via pacman once Chaotic-AUR is enabled.
+arch_chaotic_packages:
+  - pacseek
+
+
+# Minimal packages for a working Hyprland session.
+# This intentionally stays small; add "nice to have" packages elsewhere.
+arch_hyprland_packages:
+  - hyprland
+  - xorg-xwayland
+  - xdg-desktop-portal
+  - xdg-desktop-portal-hyprland
+  - xdg-desktop-portal-gtk
+  - pipewire
+  - pipewire-alsa
+  - pipewire-pulse
+  - wireplumber
+  - polkit
+  - polkit-gnome
+  - kitty

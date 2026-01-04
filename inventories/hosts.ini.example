@@ -1,0 +1,9 @@
+[incus]
+# The automation runs from the trusted workstation, so Ansible connects locally
+# and uses the Incus API (url/client cert) to reach your Incus server.
+localhost ansible_connection=local
+
+[arch]
+# Example: set ansible_host to your Arch machine IP/hostname.
+# Replace values as needed.
+mucus ansible_host=CHANGE_ME ansible_user=sosher

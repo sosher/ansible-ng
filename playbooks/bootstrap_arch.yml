@@ -1,0 +1,249 @@
+---
+- name: Bootstrap Arch basics (base tools, Chaotic-AUR, yay)
+  hosts: arch
+  gather_facts: false
+  vars:
+    arch_bootstrap_user: "{{ arch_user | default(ansible_user_id | default('sosher')) }}"
+
+    # Prefer installing yay from Chaotic-AUR (prebuilt), but keep an AUR-build
+    # fallback in case the repo is unreachable.
+    yay_repo: https://aur.archlinux.org/yay.git
+    yay_src_dir: "/home/{{ arch_bootstrap_user }}/.local/src/yay"
+
+    chaotic_key_id: "3056513887B78AEB"
+    chaotic_keyserver: "keyserver.ubuntu.com"
+    chaotic_keyring_url: "https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-keyring.pkg.tar.zst"
+    chaotic_mirrorlist_url: "https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst"
+    chaotic_pacman_conf_block: |
+      [chaotic-aur]
+      Include = /etc/pacman.d/chaotic-mirrorlist
+
+  tasks:
+    - name: Install base packages for AUR builds
+      become: true
+      community.general.pacman:
+        name: "{{ arch_base_packages }}"
+        state: present
+        update_cache: true
+      tags:
+        - packages
+        - yay
+
+    - name: Check whether yay binary is installed
+      ansible.builtin.stat:
+        path: /usr/bin/yay
+      register: yay_bin
+      tags:
+        - yay
+
+    - name: Enable Chaotic-AUR repository
+      become: true
+      block:
+        - name: Check whether Chaotic-AUR key is present
+          ansible.builtin.command:
+            cmd: pacman-key --list-keys "{{ chaotic_key_id }}"
+          register: chaotic_key_present
+          changed_when: false
+          failed_when: false
+
+        - name: Receive Chaotic-AUR signing key
+          when: chaotic_key_present.rc != 0
+          ansible.builtin.command:
+            cmd: pacman-key --recv-key "{{ chaotic_key_id }}" --keyserver "{{ chaotic_keyserver }}"
+          changed_when: true
+
+        - name: Locally sign Chaotic-AUR signing key
+          when: chaotic_key_present.rc != 0
+          ansible.builtin.command:
+            cmd: pacman-key --lsign-key "{{ chaotic_key_id }}"
+          changed_when: true
+
+        - name: Check whether chaotic keyring packages are installed
+          ansible.builtin.command:
+            cmd: pacman -Q "{{ item }}"
+          loop:
+            - chaotic-keyring
+            - chaotic-mirrorlist
+          register: chaotic_pkg_query
+          changed_when: false
+          failed_when: false
+
+        - name: Install Chaotic-AUR keyring packages from upstream URLs
+          when: chaotic_pkg_query.results | selectattr('rc', 'ne', 0) | list | length > 0
+          ansible.builtin.command:
+            cmd: >-
+              pacman -U --noconfirm
+              {{ chaotic_keyring_url }}
+              {{ chaotic_mirrorlist_url }}
+          changed_when: true
+
+        - name: Add Chaotic-AUR repository to pacman.conf
+          ansible.builtin.blockinfile:
+            path: /etc/pacman.conf
+            marker: "# {mark} ANSIBLE MANAGED: chaotic-aur"
+            block: "{{ chaotic_pacman_conf_block }}"
+      tags:
+        - chaotic-aur
+        - yay
+
+    - name: Install packages from Chaotic-AUR
+      when: (arch_chaotic_packages | default([])) | length > 0
+      become: true
+      community.general.pacman:
+        name: "{{ arch_chaotic_packages }}"
+        state: present
+        update_cache: true
+      tags:
+        - chaotic-aur
+        - packages
+
+    - name: Install yay from Chaotic-AUR (preferred)
+      when: not yay_bin.stat.exists
+      become: true
+      block:
+        - name: Refresh pacman package database
+          community.general.pacman:
+            update_cache: true
+
+        - name: Install yay package
+          community.general.pacman:
+            name: yay
+            state: present
+      rescue:
+        - name: Mark Chaotic-AUR yay install as failed
+          ansible.builtin.set_fact:
+            yay_repo_install_failed: true
+
+        - name: Show repo install error
+          ansible.builtin.debug:
+            msg: >-
+              Installing yay from Chaotic-AUR failed; will fall back to building from AUR.
+      tags:
+        - yay
+
+    - name: Re-check whether yay binary is installed
+      ansible.builtin.stat:
+        path: /usr/bin/yay
+      register: yay_bin_after_repo
+      tags:
+        - yay
+
+    - name: Ensure yay source parent directory exists (fallback)
+      when: not yay_bin_after_repo.stat.exists
+      become: true
+      ansible.builtin.file:
+        path: "{{ yay_src_dir | dirname }}"
+        state: directory
+        owner: "{{ arch_bootstrap_user }}"
+        group: "{{ arch_bootstrap_user }}"
+        mode: "0755"
+      tags:
+        - yay
+
+    - name: Clone yay from AUR (fallback)
+      when: not yay_bin_after_repo.stat.exists
+      become: true
+      become_user: "{{ arch_bootstrap_user }}"
+      ansible.builtin.git:
+        repo: "{{ yay_repo }}"
+        dest: "{{ yay_src_dir }}"
+        version: master
+        update: true
+      tags:
+        - yay
+
+    - name: Build yay package (no install) (fallback)
+      when: not yay_bin_after_repo.stat.exists
+      become: true
+      become_user: "{{ arch_bootstrap_user }}"
+      ansible.builtin.command:
+        cmd: makepkg -s --noconfirm --needed -f
+        chdir: "{{ yay_src_dir }}"
+      register: yay_makepkg
+      tags:
+        - yay
+
+    - name: Find built yay package archive (fallback)
+      when: not yay_bin_after_repo.stat.exists
+      become: true
+      become_user: "{{ arch_bootstrap_user }}"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ls -1t yay-*.pkg.tar.* | grep -m1 -v -- '-debug-'
+      args:
+        chdir: "{{ yay_src_dir }}"
+      register: yay_pkg
+      changed_when: false
+      tags:
+        - yay
+
+    - name: Extract built package name (fallback)
+      when: not yay_bin_after_repo.stat.exists
+      ansible.builtin.set_fact:
+        yay_pkgname: "{{ yay_pkg.stdout | regex_replace('-[0-9].*', '') }}"
+      tags:
+        - yay
+
+    - name: Verify built package contains /usr/bin/yay (fallback)
+      when: not yay_bin_after_repo.stat.exists
+      become: true
+      become_user: "{{ arch_bootstrap_user }}"
+      ansible.builtin.shell: |
+        set -euo pipefail
+        pkg="{{ yay_pkg.stdout }}"
+        if command -v bsdtar >/dev/null 2>&1; then
+          bsdtar -tf "$pkg"
+        else
+          tar -tf "$pkg"
+        fi | grep -Fxq 'usr/bin/yay'
+      args:
+        chdir: "{{ yay_src_dir }}"
+      changed_when: false
+      tags:
+        - yay
+
+    - name: Install yay package archive (fallback)
+      when: not yay_bin_after_repo.stat.exists
+      become: true
+      block:
+        - name: Install built yay package
+          ansible.builtin.command:
+            cmd: pacman -U --noconfirm "{{ yay_src_dir }}/{{ yay_pkg.stdout }}"
+          register: yay_pacman
+
+        - name: Verify package is installed
+          ansible.builtin.command:
+            cmd: pacman -Q "{{ yay_pkgname }}"
+          register: yay_installed_pkg
+          changed_when: false
+
+        - name: Re-check whether yay binary is installed
+          ansible.builtin.stat:
+            path: /usr/bin/yay
+          register: yay_bin_after
+
+        - name: Verify yay works
+          ansible.builtin.command:
+            cmd: yay --version
+          register: yay_version
+          changed_when: false
+
+        - name: Fail if yay binary is still missing
+          when: not yay_bin_after.stat.exists
+          ansible.builtin.fail:
+            msg: >-
+              yay install did not create /usr/bin/yay.
+              pacman stdout={{ yay_pacman.stdout | default('') | trim }}
+              pacman stderr={{ yay_pacman.stderr | default('') | trim }}
+      rescue:
+        - name: Show makepkg output
+          ansible.builtin.debug:
+            var: yay_makepkg
+        - name: Show pacman install output
+          ansible.builtin.debug:
+            var: yay_pacman
+        - name: Fail yay install block
+          ansible.builtin.fail:
+            msg: yay install failed; see debug output above.
+      tags:
+        - yay

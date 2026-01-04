@@ -1,0 +1,71 @@
+---
+- name: Install minimal Hyprland stack
+  hosts: arch
+  gather_facts: false
+  vars:
+    arch_hypr_user: "{{ arch_user | default(ansible_user_id | default('sosher')) }}"
+
+  tasks:
+    - name: Install Hyprland packages
+      become: true
+      community.general.pacman:
+        name: "{{ arch_hyprland_packages }}"
+        state: present
+        update_cache: true
+      tags:
+        - packages
+        - hyprland
+
+    - name: Ensure Hyprland config directory exists
+      become: true
+      ansible.builtin.file:
+        path: "/home/{{ arch_hypr_user }}/.config/hypr"
+        state: directory
+        owner: "{{ arch_hypr_user }}"
+        group: "{{ arch_hypr_user }}"
+        mode: "0755"
+      tags:
+        - hyprland
+        - config
+
+    - name: Check whether hyprland.conf exists
+      ansible.builtin.stat:
+        path: "/home/{{ arch_hypr_user }}/.config/hypr/hyprland.conf"
+      register: hyprland_conf
+      tags:
+        - hyprland
+        - config
+
+    - name: Write minimal Hyprland config (only if missing)
+      when: not hyprland_conf.stat.exists
+      become: true
+      ansible.builtin.copy:
+        dest: "/home/{{ arch_hypr_user }}/.config/hypr/hyprland.conf"
+        owner: "{{ arch_hypr_user }}"
+        group: "{{ arch_hypr_user }}"
+        mode: "0644"
+        content: |
+          # Minimal Hyprland config managed by Ansible.
+          # If you want to customize, edit this file; the playbook will not overwrite it.
+
+          $mod = SUPER
+
+          exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
+          exec-once = /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+
+          bind = $mod, Return, exec, kitty
+          bind = $mod, Q, killactive,
+          bind = $mod SHIFT, M, exit,
+
+          input {
+            kb_layout = us
+            follow_mouse = 1
+          }
+
+          general {
+            gaps_in = 5
+            gaps_out = 10
+          }
+      tags:
+        - hyprland
+        - config
