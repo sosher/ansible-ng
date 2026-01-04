@@ -45,6 +45,19 @@ These are intentionally small, single-purpose playbooks.
    - Creates `~/.config/hypr/` and writes a minimal `hyprland.conf` only if it does not already exist.
    - Run: `ansible-playbook -i inventories/hosts.ini playbooks/install_hyprland_min.yml`
 
+- `playbooks/install_docker.yml` (hosts: `all`)
+   - Installs Docker Engine + Docker Compose.
+   - Debian: uses the official convenience script from `https://get.docker.com`.
+   - Arch: installs `docker` + `docker-compose` via `pacman`.
+   - Enables and starts the `docker` systemd service.
+   - Run: `ansible-playbook -i inventories/hosts.ini playbooks/install_docker.yml`
+
+- `playbooks/install_ai_frameworks.yml` (hosts: `all`)
+   - Detects GPU vendor using `lspci`.
+   - NVIDIA: installs NVIDIA driver + CUDA tooling (Arch via `pacman`, Debian via `apt`).
+   - AMD: installs ROCm packages on Arch; Debian ROCm is currently not implemented.
+   - Run: `ansible-playbook -i inventories/hosts.ini playbooks/install_ai_frameworks.yml`
+
 ## How to run the Trixie playbook
 
 1. Make sure the `community.general` collection is installed (`ansible-galaxy collection install community.general`), since the `community.general.lxd_container` module comes from there.

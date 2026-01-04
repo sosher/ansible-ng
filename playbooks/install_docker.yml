@@ -1,0 +1,97 @@
+---
+- name: Install Docker + Docker Compose (Debian and Arch)
+  hosts: all
+  gather_facts: true
+  become: true
+
+  vars:
+    docker_convenience_script_url: https://get.docker.com
+    docker_convenience_script_path: /tmp/get-docker.sh
+    # Under `become: true`, `ansible_user_id` becomes `root`.
+    # Prefer the original user (sudo invoker / SSH user) for docker group membership.
+    docker_target_user: >-
+      {{
+        ansible_facts.env.SUDO_USER
+        | default(ansible_user, true)
+        | default(ansible_ssh_user, true)
+        | default(ansible_user_id, true)
+      }}
+
+  tasks:
+    - name: Check whether docker is installed
+      ansible.builtin.stat:
+        path: /usr/bin/docker
+      register: docker_bin
+      tags:
+        - docker
+
+    - name: Install Docker on Debian using the official convenience script
+      when:
+        - ansible_facts.os_family == 'Debian'
+        - not docker_bin.stat.exists
+      block:
+        - name: Ensure prerequisites are installed (Debian)
+          ansible.builtin.apt:
+            name:
+              - ca-certificates
+              - curl
+            state: present
+            update_cache: true
+
+        - name: Download Docker convenience script
+          ansible.builtin.get_url:
+            url: "{{ docker_convenience_script_url }}"
+            dest: "{{ docker_convenience_script_path }}"
+            mode: '0755'
+
+        - name: Run Docker convenience script
+          ansible.builtin.command:
+            cmd: "sh {{ docker_convenience_script_path }}"
+          changed_when: true
+      tags:
+        - docker
+
+    - name: Install Docker on Arch using pacman
+      when: ansible_facts.os_family == 'Archlinux'
+      community.general.pacman:
+        name:
+          - docker
+          - docker-compose
+        state: present
+        update_cache: true
+      tags:
+        - docker
+
+    - name: Enable and start docker service
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+      tags:
+        - docker
+
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+      tags:
+        - docker
+
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: "{{ docker_target_user }}"
+        groups: docker
+        append: true
+      tags:
+        - docker
+
+    - name: Verify docker and docker compose are available
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - docker --version
+        - docker compose version
+      register: docker_versions
+      changed_when: false
+      tags:
+        - docker

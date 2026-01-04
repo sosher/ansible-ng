@@ -1,0 +1,156 @@
+---
+- name: Install AI GPU stack (ROCm for AMD, CUDA for NVIDIA)
+  hosts: all
+  gather_facts: true
+  become: false
+
+  vars:
+    ai_gpu_detect_cmd: "set -o pipefail; lspci -nn | grep -Ei '(VGA|3D|Display)' || true"
+
+  tasks:
+    - name: Check whether lspci is installed
+      ansible.builtin.stat:
+        path: /usr/bin/lspci
+      register: ai_lspci_bin
+      changed_when: false
+      tags:
+        - ai
+        - gpu
+
+    - name: Install pciutils (provides lspci) on Debian
+      when:
+        - not ai_lspci_bin.stat.exists
+        - ansible_facts.os_family == 'Debian'
+      become: true
+      ansible.builtin.apt:
+        name: pciutils
+        state: present
+        update_cache: true
+      tags:
+        - ai
+        - gpu
+
+    - name: Install pciutils (provides lspci) on Arch
+      when:
+        - not ai_lspci_bin.stat.exists
+        - ansible_facts.os_family == 'Archlinux'
+      become: true
+      community.general.pacman:
+        name: pciutils
+        state: present
+        update_cache: true
+      tags:
+        - ai
+        - gpu
+
+    - name: Detect GPUs (lspci)
+      ansible.builtin.shell: "{{ ai_gpu_detect_cmd }}"
+      args:
+        executable: /bin/bash
+      register: ai_gpu_lspci
+      changed_when: false
+      tags:
+        - ai
+        - gpu
+
+    - name: Determine GPU vendor
+      ansible.builtin.set_fact:
+        ai_has_nvidia: "{{ 'NVIDIA' in ai_gpu_lspci.stdout }}"
+        ai_has_amd: "{{ ('AMD' in ai_gpu_lspci.stdout) or ('Advanced Micro Devices' in ai_gpu_lspci.stdout) or ('ATI' in ai_gpu_lspci.stdout) }}"
+      tags:
+        - ai
+        - gpu
+
+    - name: Show detected GPU lines
+      ansible.builtin.debug:
+        msg:
+          - "GPU lines: {{ ai_gpu_lspci.stdout_lines | default([]) }}"
+          - "Detected NVIDIA={{ ai_has_nvidia }}, AMD={{ ai_has_amd }}"
+      tags:
+        - ai
+        - gpu
+
+    # -----------------------------
+    # NVIDIA (CUDA)
+    # -----------------------------
+    - name: Install NVIDIA + CUDA on Arch
+      when:
+        - ai_has_nvidia
+        - ansible_facts.os_family == 'Archlinux'
+      become: true
+      community.general.pacman:
+        name:
+          - nvidia
+          - nvidia-utils
+          - cuda
+        state: present
+        update_cache: true
+      tags:
+        - ai
+        - gpu
+        - nvidia
+
+    - name: Install NVIDIA + CUDA on Debian
+      when:
+        - ai_has_nvidia
+        - ansible_facts.os_family == 'Debian'
+      become: true
+      block:
+        - name: Update apt cache
+          ansible.builtin.apt:
+            update_cache: true
+
+        - name: Install NVIDIA driver and CUDA toolkit
+          ansible.builtin.apt:
+            name:
+              - nvidia-driver
+              - nvidia-cuda-toolkit
+            state: present
+      tags:
+        - ai
+        - gpu
+        - nvidia
+
+    # -----------------------------
+    # AMD (ROCm)
+    # -----------------------------
+    - name: Install ROCm on Arch (AMD)
+      when:
+        - ai_has_amd
+        - ansible_facts.os_family == 'Archlinux'
+      become: true
+      community.general.pacman:
+        name:
+          - rocminfo
+          - rocm-hip-sdk
+          - rocm-opencl-runtime
+        state: present
+        update_cache: true
+      tags:
+        - ai
+        - gpu
+        - rocm
+
+    - name: ROCm on Debian is not implemented in this playbook
+      when:
+        - ai_has_amd
+        - ansible_facts.os_family == 'Debian'
+      ansible.builtin.fail:
+        msg: >-
+          AMD GPU detected, but ROCm installation on Debian is not implemented here.
+          If you want ROCm on Debian, please confirm your distro/version (often Ubuntu LTS is supported)
+          and the exact ROCm install method you prefer.
+      tags:
+        - ai
+        - gpu
+        - rocm
+
+    - name: No supported GPU detected
+      when:
+        - not ai_has_nvidia
+        - not ai_has_amd
+      ansible.builtin.debug:
+        msg: "No NVIDIA/AMD GPU detected via lspci; skipping GPU stack install."
+      tags:
+        - ai
+        - gpu
