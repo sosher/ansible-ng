@@ -36,6 +36,27 @@
       tags:
         - yay
 
+    - name: Detect Bluetooth hardware (has hci device)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        if [ -d /sys/class/bluetooth ] && ls -1 /sys/class/bluetooth 2>/dev/null | grep -q '^hci'; then
+          echo yes
+        else
+          echo no
+        fi
+      args:
+        executable: /bin/bash
+      register: bt_detect
+      changed_when: false
+      tags:
+        - bluetooth
+
+    - name: Set Bluetooth detected fact
+      ansible.builtin.set_fact:
+        arch_has_bluetooth: "{{ bt_detect.stdout | trim == 'yes' }}"
+      tags:
+        - bluetooth
+
     - name: Enable Chaotic-AUR repository
       become: true
       block:
@@ -85,6 +106,47 @@
       tags:
         - chaotic-aur
         - yay
+
+    - name: Check pending system upgrades (for reboot hint)
+      become: true
+      ansible.builtin.command:
+        cmd: pacman -Qu
+      register: arch_pending_upgrades
+      changed_when: false
+      failed_when: false
+      tags:
+        - upgrade
+
+    - name: Upgrade Arch system packages (pacman -Syu)
+      become: true
+      community.general.pacman:
+        update_cache: true
+        upgrade: true
+      tags:
+        - upgrade
+
+    - name: Decide whether a reboot is recommended after upgrade
+      ansible.builtin.set_fact:
+        arch_reboot_recommended: >-
+          {{
+            (arch_pending_upgrades.stdout_lines | default([]))
+            | select('match', '^(linux|linux-lts|linux-zen|systemd|glibc)\\s')
+            | list
+            | length > 0
+          }}
+      tags:
+        - upgrade
+
+    - name: Reboot after upgrade (optional)
+      when:
+        - arch_reboot_after_upgrade | default(false)
+        - arch_reboot_recommended | default(false)
+      become: true
+      ansible.builtin.reboot:
+        msg: "Rebooting after system upgrade (kernel/systemd/glibc updated)."
+        reboot_timeout: 900
+      tags:
+        - upgrade
 
     - name: Install packages from Chaotic-AUR
       when: (arch_chaotic_packages | default([])) | length > 0
@@ -247,3 +309,72 @@
             msg: yay install failed; see debug output above.
       tags:
         - yay
+
+    - name: Re-check whether yay binary is installed (final)
+      ansible.builtin.stat:
+        path: /usr/bin/yay
+      register: yay_bin_final
+      tags:
+        - yay
+
+    - name: Allow bootstrap user to run pacman without password (for yay)
+      when:
+        - yay_bin_final.stat.exists
+        - arch_bootstrap_user != 'root'
+      become: true
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/99-ansible-pacman-nopasswd
+        owner: root
+        group: root
+        mode: "0440"
+        content: |
+          # Managed by Ansible: allow AUR helper to install repo deps non-interactively.
+          {{ arch_bootstrap_user }} ALL=(root) NOPASSWD: /usr/bin/pacman
+        validate: visudo -cf %s
+      tags:
+        - yay
+
+    - name: Install Bluetooth packages (only if hardware present)
+      when: arch_has_bluetooth | default(false)
+      become: true
+      community.general.pacman:
+        name:
+          - bluez
+          - bluez-utils
+          - bluez-obex
+        state: present
+        update_cache: true
+      tags:
+        - bluetooth
+
+    - name: Enable and start bluetooth service (only if hardware present)
+      when: arch_has_bluetooth | default(false)
+      become: true
+      ansible.builtin.systemd:
+        name: bluetooth
+        enabled: true
+        state: started
+      tags:
+        - bluetooth
+
+    - name: Check whether bluetuith-bin (AUR) is installed
+      when: arch_has_bluetooth | default(false)
+      become: true
+      ansible.builtin.command:
+        cmd: pacman -Q bluetuith-bin
+      register: bluetuith_bin_query
+      changed_when: false
+      failed_when: false
+      tags:
+        - bluetooth
+
+    - name: Install bluetuith-bin from AUR (only if hardware present)
+      when:
+        - arch_has_bluetooth | default(false)
+        - bluetuith_bin_query.rc != 0
+      become: true
+      become_user: "{{ arch_bootstrap_user }}"
+      ansible.builtin.command:
+        cmd: yay -S --noconfirm --needed bluetuith-bin
+      tags:
+        - bluetooth

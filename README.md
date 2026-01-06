@@ -14,7 +14,7 @@ As I add new playbooks, roles, and experiments, I'll capture the lessons learned
 
 ## Current scaffolding
 
-- `inventories/hosts.ini` – defines an **inventory**, which is the list of machines Ansible can target. The only entry is `localhost` because I run Ansible on my trusted workstation and let the `community.general.lxd_container` module talk straight to the IncusOS API using my existing client certificate.
+- `inventories/hosts.ini` – defines an **inventory**, which is the list of machines Ansible can target (e.g., local Incus containers and remote hosts over SSH).
 - `playbooks/create_trixie.yml` – the first **playbook**, i.e., a YAML file that declares a desired state. It ensures a Debian Trixie container exists and installs `duf`, `bat`, `git`, and `fzf` inside it.
 - `playbooks/bootstrap_arch.yml` – bootstraps an Arch host by installing base packages, enabling the Chaotic-AUR repo, and installing `yay` (prebuilt) so later playbooks can install AUR packages.
 
@@ -30,8 +30,11 @@ These are intentionally small, single-purpose playbooks.
 - `playbooks/bootstrap_arch.yml` (hosts: `arch`)
    - Installs base packages needed for AUR builds (`arch_base_packages` from group vars).
    - Enables the Chaotic-AUR repository and installs `yay` from the repo (prebuilt).
+   - Runs a full system upgrade (`pacman -Syu`) after enabling Chaotic-AUR.
    - Installs any `arch_chaotic_packages` from group vars (e.g., `pacseek`) via `pacman`.
    - If the repo install fails, falls back to cloning/building `yay` from AUR.
+   - If Bluetooth hardware is detected, installs `bluez`/`bluez-utils`/`bluez-obex`, enables `bluetooth`, and installs `bluetuith-bin` from AUR.
+   - To allow non-interactive AUR installs, it creates `/etc/sudoers.d/99-ansible-pacman-nopasswd` allowing the bootstrap user to run `/usr/bin/pacman` via sudo without a password.
    - Run (Vault is usually required): `ansible-playbook -i inventories/hosts.ini playbooks/bootstrap_arch.yml`
 
 - `playbooks/chaotic_aur.yml` (hosts: `arch`)
@@ -48,7 +51,8 @@ These are intentionally small, single-purpose playbooks.
 - `playbooks/install_docker.yml` (hosts: `all`)
    - Installs Docker Engine + Docker Compose.
    - Debian: uses the official convenience script from `https://get.docker.com`.
-   - Arch: installs `docker` + `docker-compose` via `pacman`.
+   - Arch: installs `docker` + `docker-compose` + `lazydocker` via `pacman`.
+   - Debian: also installs `lazydocker` via `apt`.
    - Enables and starts the `docker` systemd service.
    - Run: `ansible-playbook -i inventories/hosts.ini playbooks/install_docker.yml`
 
@@ -87,19 +91,16 @@ Once I'm comfortable running this end-to-end manually, the next iteration will b
    ansible_become_pass: "<your sudo password on mucus>"
    ```
    (If the password differs per machine, use `inventories/host_vars/mucus/vault.yml` instead.)
-5. Run (you will be prompted for the Vault password):
-   ```bash
-   ansible-playbook -i inventories/hosts.ini playbooks/bootstrap_arch.yml --ask-vault-pass
-   ```
+5. To run without typing the Vault password every time, create a local file `./.vault_pass` containing only the Vault password.
 
-Option: to avoid typing the Vault password every run, create a local file `./.vault_pass` containing only the Vault password, then run:
+   This repo is configured to use `./.vault_pass` by default via `ansible.cfg` (and the file is gitignored), so once the file exists you can run:
 ```bash
-ansible-playbook -i inventories/hosts.ini playbooks/bootstrap_arch.yml --vault-password-file ./.vault_pass
+ansible-playbook -i inventories/hosts.ini playbooks/bootstrap_arch.yml
 ```
 
-If you have multiple vault passwords, use vault identities (examples):
-- Prompted: `--vault-id arch@prompt`
-- From file: `--vault-id arch@./.vault_pass`
+Optional knobs:
+- Only run the system upgrade tasks: `ansible-playbook -i inventories/hosts.ini playbooks/bootstrap_arch.yml -t upgrade`
+- Auto-reboot after upgrade when kernel/systemd/glibc were upgraded: set `arch_reboot_after_upgrade: true`
 
 If you see an error about being "Unable to use multiprocessing" and `/dev/shm`, verify `/dev/shm` exists and is writable (it is normally a tmpfs mounted with mode `1777`).
 
@@ -110,7 +111,7 @@ This playbook only enables the repo (signing key, keyring/mirrorlist packages, a
 If you’re bootstrapping a new Arch host, `playbooks/bootstrap_arch.yml` now enables Chaotic-AUR as part of the bootstrap.
 
 ```bash
-ansible-playbook -i inventories/hosts.ini playbooks/chaotic_aur.yml --ask-vault-pass
+ansible-playbook -i inventories/hosts.ini playbooks/chaotic_aur.yml
 ```
 
 ### Why the Arch playbook looks longer than the four manual commands

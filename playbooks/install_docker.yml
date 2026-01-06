@@ -57,6 +57,17 @@
         name:
           - docker
           - docker-compose
+          - lazydocker
+        state: present
+        update_cache: true
+      tags:
+        - docker
+
+    - name: Install lazydocker on Debian
+      when: ansible_facts.os_family == 'Debian'
+      ansible.builtin.apt:
+        name:
+          - lazydocker
         state: present
         update_cache: true
       tags:
@@ -91,6 +102,7 @@
       loop:
         - docker --version
         - docker compose version
+        - lazydocker --version
       register: docker_versions
       changed_when: false
       tags:
