@@ -29,6 +29,8 @@
       when:
         - ansible_facts.os_family == 'Debian'
         - not docker_bin.stat.exists
+      tags:
+        - docker
       block:
         - name: Ensure prerequisites are installed (Debian)
           ansible.builtin.apt:
@@ -48,8 +50,6 @@
           ansible.builtin.command:
             cmd: "sh {{ docker_convenience_script_path }}"
           changed_when: true
-      tags:
-        - docker
 
     - name: Install Docker on Arch using pacman
       when: ansible_facts.os_family == 'Archlinux'

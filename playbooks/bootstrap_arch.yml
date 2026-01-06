@@ -59,6 +59,9 @@
 
     - name: Enable Chaotic-AUR repository
       become: true
+      tags:
+        - chaotic-aur
+        - yay
       block:
         - name: Check whether Chaotic-AUR key is present
           ansible.builtin.command:
@@ -103,9 +106,6 @@
             path: /etc/pacman.conf
             marker: "# {mark} ANSIBLE MANAGED: chaotic-aur"
             block: "{{ chaotic_pacman_conf_block }}"
-      tags:
-        - chaotic-aur
-        - yay
 
     - name: Check pending system upgrades (for reboot hint)
       become: true
@@ -162,6 +162,8 @@
     - name: Install yay from Chaotic-AUR (preferred)
       when: not yay_bin.stat.exists
       become: true
+      tags:
+        - yay
       block:
         - name: Refresh pacman package database
           community.general.pacman:
@@ -180,8 +182,6 @@
           ansible.builtin.debug:
             msg: >-
               Installing yay from Chaotic-AUR failed; will fall back to building from AUR.
-      tags:
-        - yay
 
     - name: Re-check whether yay binary is installed
       ansible.builtin.stat:
@@ -222,6 +222,7 @@
         cmd: makepkg -s --noconfirm --needed -f
         chdir: "{{ yay_src_dir }}"
       register: yay_makepkg
+      changed_when: true
       tags:
         - yay
 
@@ -267,11 +268,14 @@
     - name: Install yay package archive (fallback)
       when: not yay_bin_after_repo.stat.exists
       become: true
+      tags:
+        - yay
       block:
         - name: Install built yay package
           ansible.builtin.command:
             cmd: pacman -U --noconfirm "{{ yay_src_dir }}/{{ yay_pkg.stdout }}"
           register: yay_pacman
+          changed_when: true
 
         - name: Verify package is installed
           ansible.builtin.command:
@@ -307,8 +311,6 @@
         - name: Fail yay install block
           ansible.builtin.fail:
             msg: yay install failed; see debug output above.
-      tags:
-        - yay
 
     - name: Re-check whether yay binary is installed (final)
       ansible.builtin.stat:
@@ -376,5 +378,6 @@
       become_user: "{{ arch_bootstrap_user }}"
       ansible.builtin.command:
         cmd: yay -S --noconfirm --needed bluetuith-bin
+      changed_when: true
       tags:
         - bluetooth

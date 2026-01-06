@@ -1,4 +1,5 @@
 ---
+# Lint note: kept intentionally simple; see README for usage.
 - name: Install AI GPU stack (ROCm for AMD, CUDA for NVIDIA)
   hosts: all
   gather_facts: true
@@ -95,6 +96,10 @@
         - ai_has_nvidia
         - ansible_facts.os_family == 'Debian'
       become: true
+      tags:
+        - ai
+        - gpu
+        - nvidia
       block:
         - name: Update apt cache
           ansible.builtin.apt:
@@ -106,10 +111,6 @@
               - nvidia-driver
               - nvidia-cuda-toolkit
             state: present
-      tags:
-        - ai
-        - gpu
-        - nvidia
 
     # -----------------------------
     # AMD (ROCm)
